@@ -39,18 +39,18 @@ M[\text{round}(p_x), \text{round}(p_y), \text{round}(p_z)], & \text{if } p \in [
 
 ## 2. System Architecture & Components
 
-The system follows a modular, pipeline-oriented architecture consisting of four decoupled core components and a unified CLI orchestration layer.
+The system follows a modular, pipeline-oriented architecture consisting of four decoupled core components inside `src/` and a unified CLI orchestration layer.
 
 ```
 +-----------------------------------------------------------------------------------+
-|                                     Ex0.py                                        |
+|                                 Ex0.py / src/Ex0.py                               |
 |                          (CLI Orchestration & Pipeline)                           |
 +-------------------+-------------------------------+-------------------------------+
                     |                               |
                     v                               v
         +-----------------------+       +-----------------------+
         |      NRRD Loader      |       |      CSV Parser       |
-        |   (nrrd_parser.py)    |       |   (nrrd_parser.py)    |
+        |  (src/nrrd_parser.py) |       |  (src/nrrd_parser.py) |
         +-----------+-----------+       +-----------+-----------+
                     |                               |
                     | 3D Matrix M                   | Plane Keyframes (K, P, 3)
@@ -59,7 +59,7 @@ The system follows a modular, pipeline-oriented architecture consisting of four 
                                     v
                         +-----------------------+
                         |    Video Generator    |
-                        | (video_generator.py)  |
+                        |(src/video_generator.py|
                         +-----------+-----------+
                                     |
                                     | Interpolates to 240 frames
@@ -67,7 +67,7 @@ The system follows a modular, pipeline-oriented architecture consisting of four 
                                     v
                         +-----------------------+
                         |   Projection Engine   |
-                        | (projection_engine.py)|
+                        |(src/projection_engine)|
                         +-----------+-----------+
                                     |
                                     | 240x 2D Frames E (H x W)
@@ -79,7 +79,7 @@ The system follows a modular, pipeline-oriented architecture consisting of four 
                         +-----------------------+
 ```
 
-### 2.1 NRRD Loader (`nrrd_parser.py`)
+### 2.1 NRRD Loader (`src/nrrd_parser.py`)
 - **Responsibilities**:
   - Load volumetric datasets stored in `.nrrd` (Nearly Raw Raster Data) format.
   - Parse metadata headers (volume dimensions, field data types, endianness, voxel spacing).
@@ -90,14 +90,14 @@ The system follows a modular, pipeline-oriented architecture consisting of four 
   - Validate matrix dimensionality ($D = 3$) and raise structured errors for corrupted or unsupported inputs.
   - Provide synthetic volumetric generators for automated testing and benchmarking.
 
-### 2.2 CSV Parser (`nrrd_parser.py` / `projection_engine.py`)
+### 2.2 CSV Parser (`src/nrrd_parser.py`)
 - **Responsibilities**:
   - Ingest planar coordinate definitions from `.csv` files.
   - Parse both 3-point planar configurations ($a, b, c$) and 4-point configurations ($a_1, a_2, b, c$).
   - Support both row-wise coordinate tuples (9 or 12 numerical elements per row) and multi-line coordinate blocks.
   - Validate spatial bounds, numerical finiteness, and geometric consistency (ensuring points do not collapse to a single point).
 
-### 2.3 Projection Engine (`projection_engine.py`)
+### 2.3 Projection Engine (`src/projection_engine.py`)
 - **Responsibilities**:
   - Project a 3D matrix $M$ onto a discrete 2D matrix $E$.
   - Implement the fundamental **vector stepping algorithm**:
@@ -123,7 +123,7 @@ The system follows a modular, pipeline-oriented architecture consisting of four 
     - Perform vectorized bounds checking and batch voxel indexing to eliminate Python interpreter overhead.
     - Maintain algorithmic equivalence between iterative stepping and vectorized modes.
 
-### 2.4 Video Generator (`video_generator.py`)
+### 2.4 Video Generator (`src/video_generator.py`)
 - **Responsibilities**:
   - Accept volumetric matrix $M$ and a sequence of keyframe plane definitions.
   - Guarantee output video contains **exactly 240 frames**.
@@ -135,7 +135,7 @@ The system follows a modular, pipeline-oriented architecture consisting of four 
   - Normalize multi-bit voxel values to 8-bit RGB/BGR range $[0, 255]$ for video codec compliance.
   - Encode frames into an MP4 container utilizing `opencv-python` (`cv2.VideoWriter`) with standard MPEG-4 / H.264 fourcc codecs.
 
-### 2.5 CLI Orchestration Layer (`Ex0.py`)
+### 2.5 CLI Orchestration Layer (`src/Ex0.py` & root launcher `Ex0.py`)
 - **CLI Interface**:
   ```bash
   python Ex0.py <file.nrrd> <file.csv> <file.mp4>
