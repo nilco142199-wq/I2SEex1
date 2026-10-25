@@ -198,3 +198,35 @@ The system follows a modular, pipeline-oriented architecture consisting of four 
 - Oblique cut intersecting multiple faces of the volume bounding cube.
 - Single-plane CSV ($K = 1$) interpolated smoothly to 240 frames.
 - Multi-point CSV ($K > 240$) resampled correctly.
+
+### 4.4 CLI Test Execution & Verification
+
+Automated testing is executed via the `pytest` CLI runner from the project root directory.
+
+#### Test Execution Commands:
+```bash
+# 1. Activate project virtual environment
+source .venv/bin/activate
+
+# 2. Run complete test suite (all 23 unit tests & benchmarks)
+pytest -v
+
+# 3. Run complete test suite with live stdout & benchmark metrics
+pytest -v -s
+
+# 4. Run tests by module
+pytest tests/test_nrrd.py -v          # NRRD and CSV format parsers
+pytest tests/test_projection.py -v    # 3D projection, equivalence, video synthesis
+
+# 5. Run only performance benchmark with live telemetry
+pytest tests/test_projection.py -k "benchmark" -s
+
+# 6. Direct execution without manual venv activation
+.venv/bin/pytest -v -s
+```
+
+#### Acceptance Criteria & Expected Results:
+- **Test Pass Rate**: 100% (23/23 tests passing with 0 failures).
+- **Throughput Benchmark**: Slicing the $500^3$ voxel matrix must output $\ge 100.0$ FPS in `test_500cubed_volume_performance_benchmark`.
+- **Equivalence Verification**: $\max |E_{\text{stepping}} - E_{\text{vec}}| = 0$ across all test slices.
+- **Container Verification**: Output MP4 must open and contain exactly 240 valid frames.
