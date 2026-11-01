@@ -100,6 +100,9 @@ The system follows a modular, pipeline-oriented architecture consisting of four 
 ### 2.3 Projection Engine (`src/projection_engine.py`)
 - **Responsibilities**:
   - Project a 3D matrix $M$ onto a discrete 2D matrix $E$.
+  - Implement strict **Plane Geometric Validation** ($\epsilon = 0.001$):
+    - **3-Point Planes (Isosceles Triangles)**: Validates $|D_{ab} - D_{ac}| < 0.001$. If the leg difference is $\ge 0.001$, raises a `ValueError`.
+    - **4-Point Planes (Trapezoids / Quads)**: Validates $|D_{ab} - D_{ac}| < 0.001$ and $D_{a1a2} \le D_{bc} + 0.001$. If leg lengths differ or the top base exceeds the bottom base, raises a `ValueError`.
   - Implement the fundamental **vector stepping algorithm**:
     1. Given plane points $a, b, c$ (or trapezoid $a_1, a_2, b, c$):
        - If 3 points: initialize apex $a_1 = a, a_2 = a$.
@@ -131,6 +134,10 @@ The system follows a modular, pipeline-oriented architecture consisting of four 
     - If the input CSV contains fewer than 240 plane definitions (e.g., $K < 240$), interpolate each coordinate component $P_i(t)$ linearly across the 240 time steps using continuous parameter $t \in [0, 1]$.
     - If $K = 1$, replicate the single plane for 240 frames.
     - If $K > 240$, resample uniformly to 240 frames.
+  - Implement **Graceful Error Frame Recovery**:
+    - Wrap per-frame projection calls in a structured `try-except ValueError` handler.
+    - When an invalid plane is encountered (e.g., non-isosceles triangle or invalid trapezoid), generate a black **Error Frame** with an explicit text overlay (`"INVALID PLANE GEOMETRY"`).
+    - Continue rendering all subsequent valid frames without halting execution, preserving the exact 240-frame sequence.
   - Maintain uniform frame resolution across the video stream by calculating global bounding dimensions and applying zero-padding.
   - Normalize multi-bit voxel values to 8-bit RGB/BGR range $[0, 255]$ for video codec compliance.
   - Encode frames into an MP4 container utilizing `opencv-python` (`cv2.VideoWriter`) with standard MPEG-4 / H.264 fourcc codecs.
@@ -157,6 +164,15 @@ The system follows a modular, pipeline-oriented architecture consisting of four 
 | **Vectorization Gain** | $> 10\times$ speedup over pure Python loops | $> 5\times$ speedup | NumPy vectorized coordinate broadcasting avoids scalar Python overhead. |
 
 ### 3.2 Robustness & Reliability
+- **Geometric Plane Validation ($\epsilon = 0.001$)**:
+  - The system validates plane specifications prior to projection:
+    - 3-point planes (triangles) must be isosceles: $|D_{ab} - D_{ac}| < 0.001$.
+    - 4-point planes (trapezoids) must have equal legs: $|D_{ab} - D_{ac}| < 0.001$, and top base $\le$ bottom base $+ 0.001$: $D_{a1a2} \le D_{bc} + 0.001$.
+  - Violations must raise a descriptive `ValueError`.
+- **Graceful Error Frame Recovery**:
+  - During video rendering, `render_video` intercepts per-frame `ValueError` exceptions caused by invalid plane geometry.
+  - Generates a black **Error Frame** with an explicit text overlay (`"INVALID PLANE GEOMETRY"`), error details, and a warning border.
+  - Continues rendering all remaining valid frames, ensuring that pipeline execution does not terminate prematurely and that exactly 240 frames are written to the MP4 file.
 - **Out-of-Bounds (OOB) Safety**:
   - If any coordinate of sample point $p = (p_x, p_y, p_z)$ satisfies $p_x < 0$, $p_x \ge s_x$, $p_y < 0$, $p_y \ge s_y$, $p_z < 0$, or $p_z \ge s_z$, the system must return $v = 0$.
   - Under no circumstances should out-of-bounds sampling raise an `IndexError` or crash the runtime.
@@ -168,7 +184,7 @@ The system follows a modular, pipeline-oriented architecture consisting of four 
 
 ### 3.3 Portability & Code Quality
 - **Python Compatibility**: Python 3.9+ through Python 3.15+.
-- **Clean Architecture**: Decoupled modules with strict separation of concerns.
+- **Clean Architecture**: Decoupled modules with strict separation of concerns inside `src/`.
 - **Type Hinting**: 100% type hinting using standard `typing` annotations (`np.ndarray`, `Tuple`, `Optional`, `Union`, `Path`).
 - **Documentation**: Comprehensive PEP 257 docstrings for all classes and public functions.
 
@@ -182,12 +198,14 @@ The system follows a modular, pipeline-oriented architecture consisting of four 
   - Verify rejection of non-existent files and invalid headers.
   - Verify CSV coordinate parsing across 3-point and 4-point formats.
 - **Projection Tests (`test_projection.py`)**:
+  - Verify triangle and trapezoid geometric validation passes for valid planes and raises `ValueError` for invalid planes ($|D_{ab} - D_{ac}| \ge 0.001$, $D_{a1a2} > D_{bc} + 0.001$).
   - Verify triangle and trapezoid slicing against known analytical shapes (e.g. 3D spheres).
   - Verify that out-of-bounds coordinates return exact zero.
   - Verify numerical equivalence between `project_plane_vectorized` and `project_plane_stepping`.
 - **Video Generator Tests**:
   - Verify linear interpolation creates exactly 240 frames.
   - Verify output `.mp4` file is generated, non-empty, and contains 240 decodable frames.
+  - Verify error frame generation and graceful recovery when invalid planes are present.
 
 ### 4.2 Performance Benchmarking
 - Automated benchmark test measuring FPS for a $500 \times 500 \times 500$ voxel volume.
@@ -198,6 +216,7 @@ The system follows a modular, pipeline-oriented architecture consisting of four 
 - Oblique cut intersecting multiple faces of the volume bounding cube.
 - Single-plane CSV ($K = 1$) interpolated smoothly to 240 frames.
 - Multi-point CSV ($K > 240$) resampled correctly.
+- Invalid plane geometry within video sequence $\to$ Gracefully replaced with error frames.
 
 ### 4.4 CLI Test Execution & Verification
 
@@ -208,7 +227,7 @@ Automated testing is executed via the `pytest` CLI runner from the project root 
 # 1. Activate project virtual environment
 source .venv/bin/activate
 
-# 2. Run complete test suite (all 23 unit tests & benchmarks)
+# 2. Run complete test suite (all 30 unit tests & benchmarks)
 pytest -v
 
 # 3. Run complete test suite with live stdout & benchmark metrics
@@ -226,7 +245,7 @@ pytest tests/test_projection.py -k "benchmark" -s
 ```
 
 #### Acceptance Criteria & Expected Results:
-- **Test Pass Rate**: 100% (23/23 tests passing with 0 failures).
+- **Test Pass Rate**: 100% (30/30 tests passing with 0 failures).
 - **Throughput Benchmark**: Slicing the $500^3$ voxel matrix must output $\ge 100.0$ FPS in `test_500cubed_volume_performance_benchmark`.
 - **Equivalence Verification**: $\max |E_{\text{stepping}} - E_{\text{vec}}| = 0$ across all test slices.
 - **Container Verification**: Output MP4 must open and contain exactly 240 valid frames.

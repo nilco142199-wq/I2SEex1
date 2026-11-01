@@ -30,17 +30,19 @@ class TestProjectionEngine:
 
     def test_triangle_plane_geometry(self) -> None:
         """Verify PlaneGeometry calculations for an isosceles triangle."""
-        # a = apex (10, 20, 30), b = (40, 20, 30), c = (40, 60, 30)
+        # a = apex (10, 40, 30), b = (40, 20, 30), c = (40, 60, 30)
         pts = np.array([
-            [10.0, 20.0, 30.0],
+            [10.0, 40.0, 30.0],
             [40.0, 20.0, 30.0],
             [40.0, 60.0, 30.0],
         ])
         geom = PlaneGeometry.from_points(pts)
         assert geom.is_triangle is True
-        assert pytest.approx(geom.d_ab, 1e-4) == 30.0
+        expected_leg = float(np.sqrt(30.0**2 + 20.0**2))
+        assert pytest.approx(geom.d_ab, 1e-4) == expected_leg
+        assert pytest.approx(geom.d_ac, 1e-4) == expected_leg
         assert pytest.approx(geom.d_bc, 1e-4) == 40.0
-        assert np.allclose(geom.v_ab, [1.0, 0.0, 0.0])
+        assert np.allclose(geom.v_ab, [30.0 / expected_leg, -20.0 / expected_leg, 0.0])
 
     def test_quad_plane_geometry(self) -> None:
         """Verify PlaneGeometry calculations for a trapezoid/quad."""
@@ -55,10 +57,67 @@ class TestProjectionEngine:
         assert pytest.approx(geom.d_a1a2, 1e-4) == 20.0
         assert pytest.approx(geom.d_bc, 1e-4) == 40.0
 
+    def test_triangle_plane_validation_success(self) -> None:
+        """Verify valid isosceles triangle passes validation (|D_ab - D_ac| < 0.001)."""
+        pts = np.array([
+            [0.0, 50.0, 0.0],
+            [100.0, 0.0, 0.0],
+            [100.0, 100.0, 0.0],
+        ])
+        geom = PlaneGeometry.from_points(pts)
+        assert abs(geom.d_ab - geom.d_ac) < 0.001
+        geom.validate()  # Should not raise
+
+    def test_triangle_plane_validation_failure(self) -> None:
+        """Verify non-isosceles triangle (|D_ab - D_ac| >= 0.001) raises ValueError."""
+        # Right-angled triangle: leg ab = 100, leg ac = sqrt(100^2 + 50^2) = 111.80
+        pts = np.array([
+            [0.0, 0.0, 0.0],
+            [100.0, 0.0, 0.0],
+            [100.0, 50.0, 0.0],
+        ])
+        with pytest.raises(ValueError, match="Triangle plane must be isosceles"):
+            PlaneGeometry.from_points(pts)
+
+    def test_trapezoid_plane_validation_success(self) -> None:
+        """Verify valid isosceles trapezoid passes validation."""
+        pts = np.array([
+            [10.0, 30.0, 0.0],
+            [10.0, 70.0, 0.0],
+            [100.0, 10.0, 0.0],
+            [100.0, 90.0, 0.0],
+        ])
+        geom = PlaneGeometry.from_points(pts)
+        assert abs(geom.d_ab - geom.d_ac) < 0.001
+        assert geom.d_a1a2 <= geom.d_bc + 0.001
+        geom.validate()
+
+    def test_trapezoid_plane_validation_unequal_legs(self) -> None:
+        """Verify trapezoid with unequal legs (|D_ab - D_ac| >= 0.001) raises ValueError."""
+        pts = np.array([
+            [10.0, 20.0, 0.0],
+            [10.0, 40.0, 0.0],
+            [50.0, 0.0, 0.0],   # leg ab is longer than leg ac
+            [50.0, 50.0, 0.0],
+        ])
+        with pytest.raises(ValueError, match="Trapezoid legs must be equal"):
+            PlaneGeometry.from_points(pts)
+
+    def test_trapezoid_plane_validation_inverted_bases(self) -> None:
+        """Verify trapezoid where top base > bottom base (D_a1a2 > D_bc + 0.001) raises ValueError."""
+        pts = np.array([
+            [10.0, 0.0, 0.0],    # top base width = 100
+            [10.0, 100.0, 0.0],
+            [60.0, 30.0, 0.0],   # bottom base width = 40 (smaller than top base)
+            [60.0, 70.0, 0.0],
+        ])
+        with pytest.raises(ValueError, match="Top base must be less than or equal to bottom base"):
+            PlaneGeometry.from_points(pts)
+
     def test_algorithmic_equivalence(self, test_volume: np.ndarray) -> None:
         """Assert exact algorithmic equivalence between stepping and vectorized modes."""
         pts = np.array([
-            [10.0, 10.0, 10.0],
+            [10.0, 25.0, 10.0],
             [40.0, 10.0, 40.0],
             [40.0, 40.0, 40.0],
         ])
@@ -85,9 +144,9 @@ class TestProjectionEngine:
 
     def test_out_of_bounds_handling(self, test_volume: np.ndarray) -> None:
         """Verify that plane coordinates outside the matrix bounds evaluate to v = 0."""
-        # Plane placed entirely outside the [0, 50) volume
+        # Plane placed entirely outside the [0, 50) volume (isosceles triangle)
         pts_outside = np.array([
-            [100.0, 100.0, 100.0],
+            [100.0, 125.0, 100.0],
             [150.0, 100.0, 100.0],
             [150.0, 150.0, 100.0],
         ])
@@ -108,7 +167,7 @@ class TestProjectionEngine:
     def test_target_size_padding(self, test_volume: np.ndarray) -> None:
         """Verify that passing target_size produces exact canvas dimensions."""
         pts = np.array([
-            [10.0, 10.0, 10.0],
+            [10.0, 20.0, 10.0],
             [30.0, 10.0, 10.0],
             [30.0, 30.0, 10.0],
         ])
@@ -127,9 +186,9 @@ class TestProjectionEngine:
         sx, sy, sz = 500, 500, 500
         vol_500 = np.random.randint(0, 255, size=(sx, sy, sz), dtype=np.uint8)
 
-        # Realistic diagonal slicing plane (approx 300x300 pixels)
+        # Realistic diagonal slicing plane (approx 300x300 pixels, isosceles triangle)
         pts = np.array([
-            [50.0, 50.0, 50.0],
+            [50.0, 200.0, 50.0],
             [350.0, 50.0, 350.0],
             [350.0, 350.0, 350.0],
         ])
@@ -211,3 +270,50 @@ class TestVideoGenerator:
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             cap.release()
             assert total_frames == 240
+
+    def test_create_error_frame(self) -> None:
+        """Verify error frame generation creates black frame with text overlay."""
+        err_frame = VideoGenerator.create_error_frame(
+            height=128,
+            width=128,
+            message="INVALID PLANE GEOMETRY",
+            detail="|D_ab - D_ac| >= 0.001",
+        )
+        assert err_frame.shape == (128, 128, 3)
+        assert err_frame.dtype == np.uint8
+        # Should have non-zero pixels for text and border, but mostly black
+        assert np.any(err_frame > 0)
+        # Background majority is zero/black
+        assert np.mean(err_frame == 0) > 0.70
+
+    def test_video_generator_graceful_error_frame_recovery(self) -> None:
+        """Verify that invalid planes produce error frames without crashing the pipeline."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_video = Path(tmpdir) / "test_error_recovery.mp4"
+            vol = np.full((50, 50, 50), 100, dtype=np.uint8)
+
+            # Keyframe 0: Valid isosceles triangle
+            kf_valid = [[10.0, 25.0, 10.0], [40.0, 10.0, 10.0], [40.0, 40.0, 10.0]]
+            # Keyframe 1: INVALID non-isosceles triangle (|D_ab - D_ac| >> 0.001)
+            kf_invalid = [[10.0, 10.0, 10.0], [40.0, 10.0, 10.0], [40.0, 50.0, 10.0]]
+
+            kfs = np.array([kf_valid, kf_invalid])
+
+            stats = VideoGenerator.render_video(
+                volume=vol,
+                plane_keyframes=kfs,
+                output_filepath=out_video,
+                frame_count=240,
+                fps=30.0,
+            )
+
+            # Assert pipeline did not crash and rendered exactly 240 frames
+            assert stats["frame_count"] == 240
+            assert stats["error_frames"] > 0
+            assert out_video.exists()
+
+            # Verify video is decodable and has 240 frames
+            cap = cv2.VideoCapture(str(out_video))
+            assert cap.isOpened()
+            assert int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) == 240
+            cap.release()

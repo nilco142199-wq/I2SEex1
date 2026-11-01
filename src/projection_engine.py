@@ -31,19 +31,70 @@ class PlaneGeometry:
     b: np.ndarray  # Bottom-left (3,)
     c: np.ndarray  # Bottom-right (3,)
     is_triangle: bool
+    validate_on_init: bool = True
+
+    EPSILON: float = 0.001
+
+    def __post_init__(self) -> None:
+        """Validate geometric constraints upon initialization."""
+        if self.validate_on_init:
+            self.validate()
+
+    def validate(self, epsilon: float = EPSILON) -> None:
+        """Validate geometric constraints for 3-point or 4-point planes.
+
+        Constraints:
+        - 3-Point Plane (Triangle): Must be isosceles, |D_ab - D_ac| < epsilon.
+          If |D_ab - D_ac| >= epsilon, raises ValueError.
+        - 4-Point Plane (Trapezoid): Equal leg lengths, |D_ab - D_ac| < epsilon,
+          AND top base <= bottom base + epsilon (D_a1a2 <= D_bc + epsilon).
+          If violated, raises ValueError.
+
+        Args:
+            epsilon: Maximum allowed discrepancy for floating-point tolerance (default: 0.001).
+
+        Raises:
+            ValueError: If plane geometry constraints are violated.
+        """
+        d_ab = self.d_ab
+        d_ac = self.d_ac
+        leg_diff = abs(d_ab - d_ac)
+
+        if self.is_triangle:
+            if leg_diff >= epsilon:
+                raise ValueError(
+                    f"Invalid triangle plane geometry: |D_ab - D_ac| = {leg_diff:.6f} >= {epsilon}. "
+                    f"Triangle plane must be isosceles with equal leg lengths (|D_ab - D_ac| < {epsilon})."
+                )
+        else:
+            if leg_diff >= epsilon:
+                raise ValueError(
+                    f"Invalid trapezoid plane geometry: |D_ab - D_ac| = {leg_diff:.6f} >= {epsilon}. "
+                    f"Trapezoid legs must be equal (|D_ab - D_ac| < {epsilon})."
+                )
+            d_a1a2 = self.d_a1a2
+            d_bc = self.d_bc
+            if d_a1a2 > d_bc + epsilon:
+                raise ValueError(
+                    f"Invalid trapezoid plane geometry: top base D_a1a2 ({d_a1a2:.6f}) > "
+                    f"bottom base D_bc + {epsilon} ({d_bc + epsilon:.6f}). "
+                    f"Top base must be less than or equal to bottom base (D_a1a2 <= D_bc + {epsilon})."
+                )
 
     @classmethod
-    def from_points(cls, points: np.ndarray) -> "PlaneGeometry":
+    def from_points(cls, points: np.ndarray, validate: bool = True) -> "PlaneGeometry":
         """Instantiate PlaneGeometry from an array of 3 or 4 3D points.
 
         Args:
             points: Array of shape (3, 3) for triangle (a, b, c) or (4, 3) for trapezoid (a1, a2, b, c).
+            validate: Whether to strictly validate geometric constraints (default: True).
 
         Returns:
             PlaneGeometry instance.
 
         Raises:
-            ValueError: If input array does not contain 3 or 4 points in 3D.
+            ValueError: If input array does not contain 3 or 4 points in 3D,
+                or if geometric constraints are violated (|D_ab - D_ac| >= 0.001 or D_a1a2 > D_bc + 0.001).
         """
         arr = np.asarray(points, dtype=np.float64)
         if arr.ndim != 2 or arr.shape[1] != 3 or arr.shape[0] not in (3, 4):
@@ -54,7 +105,14 @@ class PlaneGeometry:
             a = arr[0]
             b = arr[1]
             c = arr[2]
-            return cls(a1=a.copy(), a2=a.copy(), b=b.copy(), c=c.copy(), is_triangle=True)
+            return cls(
+                a1=a.copy(),
+                a2=a.copy(),
+                b=b.copy(),
+                c=c.copy(),
+                is_triangle=True,
+                validate_on_init=validate,
+            )
         else:
             # Trapezoid/Quad: a1, a2, b, c
             return cls(
@@ -63,6 +121,7 @@ class PlaneGeometry:
                 b=arr[2].copy(),
                 c=arr[3].copy(),
                 is_triangle=False,
+                validate_on_init=validate,
             )
 
     @property
@@ -121,6 +180,7 @@ class ProjectionEngine:
             2D numpy ndarray E of sampled voxel intensities with matching dtype as volume.
         """
         geom = points if isinstance(points, PlaneGeometry) else PlaneGeometry.from_points(points)
+        geom.validate()
         method_str = str(method).lower()
 
         if method_str in ("stepping", ProjectionMethod.STEPPING):

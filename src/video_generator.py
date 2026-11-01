@@ -15,7 +15,10 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union
 import cv2
 import numpy as np
 
-from projection_engine import ProjectionEngine, ProjectionMethod
+try:
+    from .projection_engine import ProjectionEngine, ProjectionMethod
+except ImportError:
+    from projection_engine import ProjectionEngine, ProjectionMethod
 
 
 class VideoGenerator:
@@ -146,6 +149,75 @@ class VideoGenerator:
         return np.clip(norm, 0.0, 255.0).astype(np.uint8)
 
     @classmethod
+    def create_error_frame(
+        cls,
+        height: int,
+        width: int,
+        message: str = "INVALID PLANE GEOMETRY",
+        detail: Optional[str] = None,
+    ) -> np.ndarray:
+        """Create a black 3-channel BGR error frame with centered text overlay.
+
+        Args:
+            height: Frame height in pixels.
+            width: Frame width in pixels.
+            message: Primary error message text overlay (default: 'INVALID PLANE GEOMETRY').
+            detail: Optional secondary detail / exception explanation.
+
+        Returns:
+            np.ndarray of shape (height, width, 3) and dtype uint8.
+        """
+        frame = np.zeros((height, width, 3), dtype=np.uint8)
+
+        # Draw a warning border (red)
+        if height > 10 and width > 10:
+            cv2.rectangle(frame, (2, 2), (width - 3, height - 3), (0, 0, 200), thickness=2)
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        # Scale text to fit frame width nicely
+        base_scale = 0.65 * (width / 256.0)
+        scale = max(0.4, min(1.2, base_scale))
+        thickness = max(1, int(round(scale * 2)))
+
+        # Center primary message
+        (msg_w, msg_h), baseline = cv2.getTextSize(message, font, scale, thickness)
+        msg_x = max(6, (width - msg_w) // 2)
+        msg_y = max(msg_h + 10, (height + msg_h) // 2 if not detail else height // 2 - 10)
+
+        # Draw primary error message in bright red (BGR: 0, 0, 255)
+        cv2.putText(
+            frame,
+            message,
+            (msg_x, msg_y),
+            font,
+            scale,
+            (0, 0, 255),
+            thickness,
+            cv2.LINE_AA,
+        )
+
+        # Optional detail line if space permits
+        if detail and height >= 80:
+            detail_str = detail if len(detail) <= 45 else detail[:42] + "..."
+            sub_scale = max(0.3, scale * 0.55)
+            sub_thick = 1
+            (sub_w, sub_h), _ = cv2.getTextSize(detail_str, font, sub_scale, sub_thick)
+            sub_x = max(6, (width - sub_w) // 2)
+            sub_y = min(height - 10, msg_y + msg_h + 18)
+            cv2.putText(
+                frame,
+                detail_str,
+                (sub_x, sub_y),
+                font,
+                sub_scale,
+                (220, 220, 220),
+                sub_thick,
+                cv2.LINE_AA,
+            )
+
+        return frame
+
+    @classmethod
     def render_video(
         cls,
         volume: np.ndarray,
@@ -219,24 +291,36 @@ class VideoGenerator:
             vol_max = 255.0
 
         t_start = time.perf_counter()
+        error_frames_count = 0
 
         try:
             for idx in range(frame_count):
                 plane_pts = planes[idx]
 
-                # Project 2D plane from 3D volume
-                raw_frame = ProjectionEngine.project(
-                    volume=volume,
-                    points=plane_pts,
-                    method=method,
-                    target_size=(canvas_h, canvas_w),
-                )
+                try:
+                    # Project 2D plane from 3D volume
+                    raw_frame = ProjectionEngine.project(
+                        volume=volume,
+                        points=plane_pts,
+                        method=method,
+                        target_size=(canvas_h, canvas_w),
+                    )
 
-                # Normalize to 8-bit unsigned integer
-                uint8_frame = cls.normalize_frame_to_uint8(raw_frame, global_max=vol_max)
+                    # Normalize to 8-bit unsigned integer
+                    uint8_frame = cls.normalize_frame_to_uint8(raw_frame, global_max=vol_max)
 
-                # Convert single-channel grayscale to 3-channel BGR for VideoWriter
-                bgr_frame = cv2.cvtColor(uint8_frame, cv2.COLOR_GRAY2BGR)
+                    # Convert single-channel grayscale to 3-channel BGR for VideoWriter
+                    bgr_frame = cv2.cvtColor(uint8_frame, cv2.COLOR_GRAY2BGR)
+
+                except ValueError as err:
+                    # Handle invalid plane geometries gracefully by generating an Error Frame
+                    error_frames_count += 1
+                    bgr_frame = cls.create_error_frame(
+                        height=canvas_h,
+                        width=canvas_w,
+                        message="INVALID PLANE GEOMETRY",
+                        detail=str(err),
+                    )
 
                 writer.write(bgr_frame)
 
@@ -260,4 +344,5 @@ class VideoGenerator:
             "elapsed_seconds": elapsed_time,
             "projection_fps": actual_fps,
             "file_size_bytes": file_size,
+            "error_frames": error_frames_count,
         }
